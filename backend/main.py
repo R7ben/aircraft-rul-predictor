@@ -1,13 +1,25 @@
-# main.py — a tiny FastAPI backend that serves RUL predictions.
+# main.py — FastAPI backend that serves RUL predictions.
+# Extended: single predict, batch predict (from CSV rows), and feature importance.
 
-from fastapi import FastAPI          # the web framework (our "waiter")
-from pydantic import BaseModel       # validates incoming data
-import joblib                        # loads our saved model
-import pandas as pd                  # arranges data for the model
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware   # lets the dashboard talk to us
+from pydantic import BaseModel
+from typing import List
+import joblib
+import pandas as pd
+import numpy as np
 from pathlib import Path
 
 # --- 1. Create the app ---
 app = FastAPI(title="Aircraft RUL Predictor")
+
+# Allow the Streamlit dashboard (and any local tool) to call the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- 2. Load the trained model once, when the server starts ---
 MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "model.pkl"
@@ -17,8 +29,7 @@ model = joblib.load(MODEL_PATH)
 FEATURES = ['op_setting_1', 'op_setting_2', 'op_setting_3'] \
            + [f'sensor_{i:02d}' for i in range(1, 22)]
 
-# --- 3. Define what an incoming request must look like ---
-# The dashboard will send these 24 numbers; Pydantic checks they're all there.
+# --- 3. Request shape for a single reading ---
 class EngineReading(BaseModel):
     op_setting_1: float
     op_setting_2: float
@@ -45,30 +56,58 @@ class EngineReading(BaseModel):
     sensor_20: float
     sensor_21: float
 
-# --- 4. A simple health check, so we can confirm the server is alive ---
+class BatchRequest(BaseModel):
+    readings: List[EngineReading]
+
+# --- Shared helper: turn a RUL number into a risk label ---
+def risk_of(rul: float) -> str:
+    if rul < 30:
+        return "High"
+    if rul < 75:
+        return "Medium"
+    return "Low"
+
+# --- 4. Health check ---
 @app.get("/")
 def home():
     return {"status": "running", "message": "RUL backend is alive"}
 
-# --- 5. The main prediction endpoint ---
+# --- 5. Single prediction ---
 @app.post("/predict")
 def predict(reading: EngineReading):
-    # Turn the incoming reading into a one-row table in the right column order
     row = pd.DataFrame([reading.dict()])[FEATURES]
-
-    # Ask the model to predict the RUL
     predicted_rul = float(model.predict(row)[0])
-
-    # Turn the number into a risk level (same thresholds as your team)
-    if predicted_rul < 30:
-        risk = "High"
-    elif predicted_rul < 75:
-        risk = "Medium"
-    else:
-        risk = "Low"
-
-    # Send the answer back
     return {
         "predicted_rul": round(predicted_rul, 1),
-        "risk_level": risk
+        "risk_level": risk_of(predicted_rul),
     }
+
+# --- 6. Batch prediction (for the CSV upload feature) ---
+@app.post("/predict_batch")
+def predict_batch(req: BatchRequest):
+    if not req.readings:
+        raise HTTPException(status_code=400, detail="No readings provided")
+    df = pd.DataFrame([r.dict() for r in req.readings])[FEATURES]
+    preds = model.predict(df).astype(float)
+    return {
+        "predictions": [
+            {"predicted_rul": round(float(p), 1), "risk_level": risk_of(float(p))}
+            for p in preds
+        ]
+    }
+
+# --- 7. Feature importance (for the "why did the model predict this?" panel) ---
+@app.get("/feature_importance")
+def feature_importance():
+    # RandomForest lives inside a scikit-learn Pipeline; grab the last step
+    try:
+        rf = model.steps[-1][1] if hasattr(model, "steps") else model
+        importances = rf.feature_importances_
+    except AttributeError:
+        raise HTTPException(status_code=500, detail="Model has no feature_importances_")
+    ranked = sorted(
+        zip(FEATURES, importances.tolist()),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    return {"features": [{"name": n, "importance": float(v)} for n, v in ranked]}

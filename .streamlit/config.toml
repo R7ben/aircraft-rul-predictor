@@ -1,0 +1,17 @@
+# .streamlit/config.toml — cockpit / mission-control theme
+# Streamlit reads this automatically. No code changes needed.
+
+[theme]
+base = "dark"
+primaryColor = "#00E5FF"              # neon cyan — the "accent" glow
+backgroundColor = "#0A0F1C"           # deep cockpit blue-black
+secondaryBackgroundColor = "#111827"  # slightly lighter panels
+textColor = "#E5E7EB"                 # soft off-white
+font = "monospace"                    # instrument-panel feel
+
+[server]
+runOnSave = true                      # auto-reload when you edit app.py
+headless = true
+
+[browser]
+gatherUsageStats = false

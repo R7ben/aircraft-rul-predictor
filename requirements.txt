@@ -1,0 +1,17 @@
+# Core ML + data
+scikit-learn==1.6.1
+pandas
+numpy
+joblib
+
+# Backend API
+fastapi
+uvicorn[standard]
+pydantic
+
+# Dashboard + pretty UI
+streamlit>=1.36
+plotly>=5.22           # animated gauges & charts
+streamlit-lottie       # smooth loading/idle animations
+streamlit-option-menu  # cockpit-style navbar
+requests               # dashboard → backend calls
